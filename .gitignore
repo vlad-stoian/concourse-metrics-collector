@@ -2,6 +2,8 @@ config.json
 
 vendor/
 
+.idea/
+
 # Created by https://www.gitignore.io/api/go,intellij
 
 ### Go ###

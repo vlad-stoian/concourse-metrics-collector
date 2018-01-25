@@ -14,13 +14,19 @@
   revision = "6226ea591a40176dd3ff9cd8eff81ed6ca721a00"
 
 [[projects]]
+  name = "github.com/cenkalti/backoff"
+  packages = ["."]
+  revision = "61153c768f31ee5f130071d08fc82b85208528de"
+  version = "v1.1.0"
+
+[[projects]]
   branch = "master"
   name = "github.com/concourse/atc"
   packages = [
     ".",
     "event"
   ]
-  revision = "80526ec2f5f9d49d0e2d8dfa6bce872d9c17162f"
+  revision = "ae4d0c2fd39e525edf1b778164532cc6a4cf220a"
 
 [[projects]]
   name = "github.com/concourse/fly"
@@ -40,13 +46,13 @@
     "concourse/eventstream",
     "concourse/internal"
   ]
-  revision = "772c3d7ad27ea5583b79921977914be2c3392f5d"
+  revision = "ee7eca0318fdc5c47d723b4462d8bf5a6be7c027"
 
 [[projects]]
   branch = "master"
   name = "github.com/concourse/skymarshal"
   packages = ["provider"]
-  revision = "4938ed37aac23da673a041b9a4bdf1dd7ad6db15"
+  revision = "757b37d68b2b91a3550784ada60ffbe967bb22d4"
 
 [[projects]]
   branch = "master"
@@ -64,7 +70,7 @@
   branch = "master"
   name = "github.com/golang/protobuf"
   packages = ["proto"]
-  revision = "1e59b77b52bf8e4b449a57e6f79f21226d571845"
+  revision = "c65a0412e71e8b9b3bfd22925720d23c0f054237"
 
 [[projects]]
   name = "github.com/google/jsonapi"
@@ -106,7 +112,7 @@
   branch = "master"
   name = "github.com/mitchellh/mapstructure"
   packages = ["."]
-  revision = "06020f85339e21b2478f756a78e295255ffa4d6a"
+  revision = "b4575eea38cca1123ec2dc90c26529b5c5acfcff"
 
 [[projects]]
   name = "github.com/peterhellberg/link"
@@ -133,7 +139,7 @@
     "context",
     "context/ctxhttp"
   ]
-  revision = "434ec0c7fe3742c984919a691b2018a6e9694425"
+  revision = "0ed95abb35c445290478a5348a7b38bb154135fd"
 
 [[projects]]
   branch = "master"
@@ -142,13 +148,13 @@
     ".",
     "internal"
   ]
-  revision = "30785a2c434e431ef7c507b54617d6a951d5f2b4"
+  revision = "b28fcf2b08a19742b43084fb40ab78ac6c3d8067"
 
 [[projects]]
   branch = "master"
   name = "golang.org/x/sys"
   packages = ["unix"]
-  revision = "810d7000345868fc619eb81f46307107118f4ae1"
+  revision = "03467258950d845cd1877eab69461b98e8c09219"
 
 [[projects]]
   name = "google.golang.org/appengine"
@@ -170,9 +176,15 @@
   packages = ["."]
   revision = "d670f9405373e636a5a2765eea47fac0c9bc91a4"
 
+[[projects]]
+  name = "gopkg.in/zorkian/go-datadog-api.v2"
+  packages = ["."]
+  revision = "8d504de7b41981e0075444686fa389708bce2dbc"
+  version = "v2.8"
+
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "aca57a2b4a72613ed2325842c53d0d14d0a884cc4764e059b391e5e9b71537b2"
+  inputs-digest = "d05cb1566eeb495b78bc69f0ea2ee7750b27edb4293482ffc4d99412abcd1172"
   solver-name = "gps-cdcl"
   solver-version = 1
