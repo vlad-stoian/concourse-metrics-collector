@@ -314,6 +314,9 @@ func PublishMetrics(datadogConfig DatadogConfig, taskMetrics map[string]TaskMetr
 		metrics = append(metrics, metric)
 	}
 
+	fmt.Println("About to send metrics to datadog")
+	PrettyPrint(metrics)
+
 	datadogClient.PostMetrics(metrics)
 }
 
@@ -333,6 +336,9 @@ func main() {
 	builds := FilterBuilds(target.Team(), oneHourAgo)
 
 	metrics := GetMetrics(target.Client(), builds)
+
+	fmt.Println("Gathered metrics from everywhere")
+	PrettyPrint(metrics)
 
 	PublishMetrics(config.Datadog, metrics)
 }
