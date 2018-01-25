@@ -101,25 +101,27 @@ func GetTarget(config Config) rc.Target {
 }
 
 func FilterBuilds(team concourse.Team, timeAgo time.Time) []atc.Build {
-	pipelineName := "rabbitmq-1.11" // TODO: Remove this
-
-	jobs, _ := team.ListJobs(pipelineName)
-
 	var builds []atc.Build
 
-	for _, job := range jobs {
-		page := concourse.Page{Limit: 0}
-		jobBuilds, _, _, _ := team.JobBuilds(pipelineName, job.Name, page)
+	pipelines, _ := team.ListPipelines()
+	for _, pipeline := range pipelines {
 
-		for _, jobBuild := range jobBuilds {
-			buildTime := time.Unix(jobBuild.EndTime, 0)
+		jobs, _ := team.ListJobs(pipeline.Name)
 
-			if jobBuild.IsRunning() || jobBuild.OneOff() {
-				continue
-			}
+		for _, job := range jobs {
+			page := concourse.Page{Limit: 0}
+			jobBuilds, _, _, _ := team.JobBuilds(pipeline.Name, job.Name, page)
 
-			if buildTime.After(timeAgo) {
-				builds = append(builds, jobBuild)
+			for _, jobBuild := range jobBuilds {
+				buildTime := time.Unix(jobBuild.EndTime, 0)
+
+				if jobBuild.IsRunning() || jobBuild.OneOff() {
+					continue
+				}
+
+				if buildTime.After(timeAgo) {
+					builds = append(builds, jobBuild)
+				}
 			}
 		}
 	}
