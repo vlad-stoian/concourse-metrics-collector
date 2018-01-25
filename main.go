@@ -234,9 +234,11 @@ func PrettyPrint(v interface{}) {
 }
 
 func GetMetrics(client concourse.Client, builds []atc.Build) map[string]TaskMetric {
-	ids := map[string]TaskMetric{}
+	allTaskMetrics := map[string]TaskMetric{}
 
 	for _, build := range builds {
+
+		someTaskMetrics := map[string]TaskMetric{}
 
 		buildPublicPlan, _, _ := client.BuildPlan(build.ID) // TODO: Check error
 
@@ -247,7 +249,7 @@ func GetMetrics(client concourse.Client, builds []atc.Build) map[string]TaskMetr
 			os.Exit(1)
 		}
 
-		CollectIDs(buildPlan, ids)
+		CollectIDs(buildPlan, someTaskMetrics)
 
 		// Start getting buildEvents
 		buildEvents, err := client.BuildEvents(strconv.Itoa(build.ID))
@@ -273,9 +275,9 @@ func GetMetrics(client concourse.Client, builds []atc.Build) map[string]TaskMetr
 			events = append(events, streamEvent)
 		}
 
-		CollectEventTimestamps(events, ids)
+		CollectEventTimestamps(events, someTaskMetrics)
 
-		for key, value := range ids {
+		for key, value := range someTaskMetrics {
 			value.Tags = []string{
 				fmt.Sprintf("job-name:%s", build.JobName),
 				fmt.Sprintf("build-name:%s", build.Name),
@@ -287,11 +289,11 @@ func GetMetrics(client concourse.Client, builds []atc.Build) map[string]TaskMetr
 				fmt.Sprintf("task-id:%s", value.ID),
 			}
 
-			ids[key] = value
+			allTaskMetrics[key] = value
 		}
 	}
 
-	return ids
+	return allTaskMetrics
 }
 
 func PublishMetrics(datadogConfig DatadogConfig, taskMetrics map[string]TaskMetric) {
