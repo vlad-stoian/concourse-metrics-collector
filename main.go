@@ -320,15 +320,15 @@ func main() {
 	flag.Parse()
 
 	minusOneHour, _ := time.ParseDuration("-1h")
-	oneDayAgo := time.Now().Add(24 * minusOneHour)
-	fmt.Println(oneDayAgo)
+	oneHourAgo := time.Now().Add(minusOneHour)
+	fmt.Println(oneHourAgo)
 
 	fmt.Printf("Reading config from: %s\n", *configPath)
 	config := ReadConfig(*configPath)
 
 	target := GetTarget(config)
 
-	builds := FilterBuilds(target.Team(), oneDayAgo)
+	builds := FilterBuilds(target.Team(), oneHourAgo)
 
 	metrics := GetMetrics(target.Client(), builds)
 
