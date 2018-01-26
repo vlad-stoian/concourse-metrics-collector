@@ -310,9 +310,14 @@ func PublishMetrics(datadogConfig DatadogConfig, taskMetrics map[string]TaskMetr
 		metric.SetUnit("")
 		metric.Tags = value.Tags
 
+		endTime := value.EndTime
+		if endTime == 0 {
+			endTime = time.Now().Unix()
+		}
+
 		taskDuration := time.Unix(value.EndTime, 0).Sub(time.Unix(value.StartTime, 0))
 
-		metric.Points = append(metric.Points, datadog.DataPoint{float64(value.EndTime), taskDuration.Minutes()})
+		metric.Points = append(metric.Points, datadog.DataPoint{float64(endTime), taskDuration.Minutes()})
 
 		metrics = append(metrics, metric)
 	}
