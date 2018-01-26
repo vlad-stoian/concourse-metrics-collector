@@ -286,6 +286,7 @@ func GetMetrics(client concourse.Client, builds []atc.Build) map[string]TaskMetr
 				fmt.Sprintf("pipeline-name:%s", build.PipelineName),
 				fmt.Sprintf("team-name:%s", build.TeamName),
 				fmt.Sprintf("task-type:%s", value.Type),
+				fmt.Sprintf("task-name:%s", value.Name),
 				fmt.Sprintf("task-id:%s", value.ID),
 			}
 
