@@ -2,10 +2,10 @@
 
 
 [[projects]]
-  branch = "master"
   name = "code.cloudfoundry.org/lager"
   packages = ["."]
   revision = "0bfa98e49e7a976af91e918d47978f07c00b081f"
+  version = "v1.0.0"
 
 [[projects]]
   branch = "master"
@@ -16,8 +16,8 @@
 [[projects]]
   name = "github.com/cenkalti/backoff"
   packages = ["."]
-  revision = "61153c768f31ee5f130071d08fc82b85208528de"
-  version = "v1.1.0"
+  revision = "2ea60e5f094469f9e65adb9cd103795b73ae743e"
+  version = "v2.0.0"
 
 [[projects]]
   branch = "master"
@@ -26,7 +26,7 @@
     ".",
     "event"
   ]
-  revision = "ae4d0c2fd39e525edf1b778164532cc6a4cf220a"
+  revision = "830a18d4c2e7ad1969068c02b0e4de6ed044ce9e"
 
 [[projects]]
   name = "github.com/concourse/fly"
@@ -35,8 +35,8 @@
     "ui",
     "version"
   ]
-  revision = "50111b8d974a67681ebeb06e45c0fbf50e2ee196"
-  version = "v3.8.1-rc.9"
+  revision = "b9a475c645f5d6e5b6c64eb2f8dbaca01c7517e5"
+  version = "v3.10.1-rc.9"
 
 [[projects]]
   branch = "master"
@@ -46,13 +46,13 @@
     "concourse/eventstream",
     "concourse/internal"
   ]
-  revision = "ee7eca0318fdc5c47d723b4462d8bf5a6be7c027"
+  revision = "41ddaebe5f315e06dfbadb032440c5e13978f344"
 
 [[projects]]
   branch = "master"
   name = "github.com/concourse/skymarshal"
   packages = ["provider"]
-  revision = "757b37d68b2b91a3550784ada60ffbe967bb22d4"
+  revision = "a92887b09fec6163bfa1a927adf5a392538dce57"
 
 [[projects]]
   branch = "master"
@@ -63,14 +63,14 @@
 [[projects]]
   name = "github.com/fatih/color"
   packages = ["."]
-  revision = "570b54cabe6b8eb0bc2dfce68d964677d63b5260"
-  version = "v1.5.0"
+  revision = "507f6050b8568533fb3f5504de8e5205fa62a114"
+  version = "v1.6.0"
 
 [[projects]]
-  branch = "master"
   name = "github.com/golang/protobuf"
   packages = ["proto"]
-  revision = "c65a0412e71e8b9b3bfd22925720d23c0f054237"
+  revision = "925541529c1fa6821df4e44ce2723319eb2be768"
+  version = "v1.0.0"
 
 [[projects]]
   name = "github.com/google/jsonapi"
@@ -79,22 +79,10 @@
   version = "1.0.0"
 
 [[projects]]
-  branch = "master"
-  name = "github.com/hashicorp/errwrap"
-  packages = ["."]
-  revision = "7554cd9344cec97297fa6649b055a8c98c2a1e55"
-
-[[projects]]
-  branch = "master"
-  name = "github.com/hashicorp/go-multierror"
-  packages = ["."]
-  revision = "b7773ae218740a7be65057fc60b366a49b538a44"
-
-[[projects]]
   name = "github.com/jessevdk/go-flags"
   packages = ["."]
-  revision = "96dc06278ce32a0e9d957d590bb987c81ee66407"
-  version = "v1.3.0"
+  revision = "c6ca198ec95c841fdb89fc0de7496fed11ab854e"
+  version = "v1.4.0"
 
 [[projects]]
   name = "github.com/mattn/go-colorable"
@@ -112,7 +100,7 @@
   branch = "master"
   name = "github.com/mitchellh/mapstructure"
   packages = ["."]
-  revision = "b4575eea38cca1123ec2dc90c26529b5c5acfcff"
+  revision = "00c29f56e2386353d58c599509e8dc3801b0d716"
 
 [[projects]]
   name = "github.com/peterhellberg/link"
@@ -139,7 +127,7 @@
     "context",
     "context/ctxhttp"
   ]
-  revision = "0ed95abb35c445290478a5348a7b38bb154135fd"
+  revision = "61147c48b25b599e5b561d2e9c4f3e1ef489ca41"
 
 [[projects]]
   branch = "master"
@@ -148,13 +136,13 @@
     ".",
     "internal"
   ]
-  revision = "b28fcf2b08a19742b43084fb40ab78ac6c3d8067"
+  revision = "921ae394b9430ed4fb549668d7b087601bd60a81"
 
 [[projects]]
   branch = "master"
   name = "golang.org/x/sys"
   packages = ["unix"]
-  revision = "03467258950d845cd1877eab69461b98e8c09219"
+  revision = "3b87a42e500a6dc65dae1a55d0b641295971163e"
 
 [[projects]]
   name = "google.golang.org/appengine"
@@ -171,20 +159,20 @@
   version = "v1.0.0"
 
 [[projects]]
-  branch = "v2"
   name = "gopkg.in/yaml.v2"
   packages = ["."]
-  revision = "d670f9405373e636a5a2765eea47fac0c9bc91a4"
+  revision = "5420a8b6744d3b0345ab293f6fcba19c978f1183"
+  version = "v2.2.1"
 
 [[projects]]
   name = "gopkg.in/zorkian/go-datadog-api.v2"
   packages = ["."]
-  revision = "8d504de7b41981e0075444686fa389708bce2dbc"
-  version = "v2.8"
+  revision = "fa40c76e4030afa1f7fe07bfbc92f01f22c9f40e"
+  version = "v2.8.3"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "d05cb1566eeb495b78bc69f0ea2ee7750b27edb4293482ffc4d99412abcd1172"
+  inputs-digest = "bb7bcf05219bf6f43bd4c8ba951c5b39a7bfbc4c8e258fb47d28f4fd7d14d803"
   solver-name = "gps-cdcl"
   solver-version = 1
