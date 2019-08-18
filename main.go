@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"golang.org/x/oauth2"
 	"io"
 	"io/ioutil"
 	"os"
@@ -75,25 +77,36 @@ func ReadConfig(configPath string) Config {
 }
 
 func GetTarget(config Config) rc.Target {
-	target, err := rc.NewBasicAuthTarget(config.Concourse.Target, config.Concourse.URL, config.Concourse.Team, false, config.Concourse.Username, config.Concourse.Password, "", false)
+	oauth2Config := oauth2.Config{
+		ClientID:     "fly",
+		ClientSecret: "Zmx5",
+		Endpoint:     oauth2.Endpoint{TokenURL: config.Concourse.URL + "/sky/token"},
+		Scopes:       []string{"openid", "profile", "email", "federated:id", "groups"},
+	}
+
+	ctx := context.TODO()
+
+	token, err := oauth2Config.PasswordCredentialsToken(ctx, config.Concourse.Username, config.Concourse.Password)
 	if err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)
 	}
 
-	token, err := target.Team().AuthToken()
+	fmt.Println("Save Target")
+	err = rc.SaveTarget(
+		config.Concourse.Target,
+		config.Concourse.URL,
+		true,
+		config.Concourse.Team,
+		&rc.TargetToken{
+			Type:  token.TokenType,
+			Value: token.AccessToken,
+		},
+		"")
+
+	target, err := rc.LoadTarget(config.Concourse.Target, false)
 	if err != nil {
 		fmt.Println(err.Error())
-
-		os.Exit(1)
-	}
-
-	err = rc.SaveTarget(config.Concourse.Target, config.Concourse.URL, true, config.Concourse.Team, &rc.TargetToken{Type: token.Type, Value: token.Value}, "")
-
-	target, err = rc.LoadTarget(config.Concourse.Target, false)
-	if err != nil {
-		fmt.Println(err.Error())
-
 		os.Exit(1)
 	}
 
@@ -336,11 +349,15 @@ func main() {
 	oneHourAgo := time.Now().Add(minusOneHour)
 	fmt.Println(oneHourAgo)
 
-	fmt.Printf("Reading config from: %s\n", *configPath)
+	fmt.Println("Reading config from: ", *configPath)
 	config := ReadConfig(*configPath)
 
+	//fmt.Println(config)
+
+	fmt.Println("Getting target")
 	target := GetTarget(config)
 
+	fmt.Println("Filtering builds")
 	builds := FilterBuilds(target.Team(), oneHourAgo)
 
 	metrics := GetMetrics(target.Client(), builds)
@@ -348,5 +365,5 @@ func main() {
 	fmt.Println("Gathered metrics from everywhere")
 	PrettyPrint(metrics)
 
-	PublishMetrics(config.Datadog, metrics)
+	//PublishMetrics(config.Datadog, metrics)
 }
