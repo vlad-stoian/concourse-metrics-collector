@@ -31,15 +31,12 @@ type ConcourseConfig struct {
 	Target   rc.TargetName `json:"target"`
 }
 
-type DatadogConfig struct {
-	APIKey       string `json:"api-key"`
-	APPKey       string `json:"app-key"`
-	MetricPrefix string `json:"metric-prefix"`
-}
-
 type Config struct {
 	Concourse ConcourseConfig `json:"concourse"`
-	Datadog   DatadogConfig   `json:"datadog"`
+}
+
+type Cache struct {
+	Processed map[int]bool `json:"processed"`
 }
 
 type TaskMetric struct {
@@ -58,21 +55,61 @@ type TaskMetric struct {
 	TeamName     string `json:"team_name"`
 }
 
-func ReadConfig(configPath string) Config {
+func ReadConfig(configPath string) (Config, error) {
 	raw, err := ioutil.ReadFile(configPath)
 	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
+		return Config{}, errors.Wrap(err, "failed-to-read-config-file")
 	}
 
 	var config Config
 	err = json.Unmarshal(raw, &config)
 	if err != nil {
+		return Config{}, errors.Wrap(err, "failed-to-unmarshal-config")
+	}
+
+	return config, nil
+}
+
+func ReadCache(cachePath string) (Cache, error) {
+	raw, err := ioutil.ReadFile(cachePath)
+	if os.IsNotExist(err) {
+		return Cache{Processed: map[int]bool{}}, nil
+	}
+
+	if err != nil {
+		return Cache{}, errors.Wrap(err, "failed-to-read-cache-file")
+	}
+
+	var cache Cache
+	err = json.Unmarshal(raw, &cache)
+	if err != nil {
+		return Cache{}, errors.Wrap(err, "failed-to-unmarshal-cache")
+	}
+
+	return cache, nil
+}
+
+func WriteCache(cachePath string, cache Cache) {
+	raw, err := json.Marshal(cache)
+	if err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)
 	}
 
-	return config
+	err = ioutil.WriteFile(cachePath, raw, 0644)
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+}
+
+func (c *Cache) IsProcessed(buildID int) bool {
+	wasProcessed, ok := c.Processed[buildID]
+	return ok && wasProcessed
+}
+
+func (c *Cache) MarkProcessed(buildID int) {
+	c.Processed[buildID] = true
 }
 
 func FilterBuilds(team concourse.Team, timeAgo time.Time) []atc.Build {
@@ -221,94 +258,90 @@ func GetOriginAndTime(event atc.Event) (string, int64, error) {
 	return genericEvent.Origin.ID, genericEvent.Time, nil
 }
 
-func GetMetrics(client concourse.Client, builds []atc.Build) (map[string]TaskMetric, error) {
-	allTaskMetrics := map[string]TaskMetric{}
+func GetMetrics(client concourse.Client, build atc.Build) (map[string]TaskMetric, error) {
+	taskMetrics := map[string]TaskMetric{}
 
-	for _, build := range builds {
+	buildPublicPlan, found, err := client.BuildPlan(build.ID) // TODO: Check error
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get build plan")
+	}
 
-		_, _ = fmt.Fprintf(os.Stderr, "Build %d, unix %d, time %s\n", build.ID, build.StartTime, time.Unix(build.StartTime, 0))
+	if !found {
+		return taskMetrics, nil
+	}
 
-		someTaskMetrics := map[string]TaskMetric{}
+	var buildPlan atc.Plan
+	err = json.Unmarshal(*buildPublicPlan.Plan, &buildPlan)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to unmarshal build plan")
+	}
 
-		buildPublicPlan, _, err := client.BuildPlan(build.ID) // TODO: Check error
+	CollectIDs(buildPlan, taskMetrics)
+
+	buildEvents, err := client.BuildEvents(strconv.Itoa(build.ID))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get build events")
+	}
+
+	// https://github.com/concourse/concourse/blob/09aecaa35913a78a475f72abdb33783903fa3f3b/fly/eventstream/render.go
+	var events []atc.Event
+	for {
+		streamEvent, err := buildEvents.NextEvent()
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to get build plan")
+			if err == io.EOF {
+				break
+			}
+
+			return nil, errors.Wrap(err, "failed to get the next event")
 		}
 
-		var buildPlan atc.Plan
-		err = json.Unmarshal(*buildPublicPlan.Plan, &buildPlan)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to unmarshal build plan")
-		}
+		events = append(events, streamEvent)
+	}
 
-		CollectIDs(buildPlan, someTaskMetrics)
+	initializeTimes := map[string]int64{}
+	startTimes := map[string]int64{}
+	finishTimes := map[string]int64{}
 
-		buildEvents, err := client.BuildEvents(strconv.Itoa(build.ID))
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to get build events")
-		}
-
-		// https://github.com/concourse/fly/blob/03cd3175e8c409f35d107c201f0068757d920311/eventstream/render.go
-
-		var events []atc.Event
-		for {
-			streamEvent, err := buildEvents.NextEvent()
+	for _, currentEvent := range events {
+		if strings.HasPrefix(string(currentEvent.EventType()), "initialize-") {
+			originID, timez, err := GetOriginAndTime(currentEvent)
 			if err != nil {
-				if err == io.EOF {
-					break
-				}
-
-				return nil, errors.Wrap(err, "failed to get the next event")
+				return nil, errors.Wrap(err, "failed to get origin and time for an initialize- event")
 			}
-
-			events = append(events, streamEvent)
+			initializeTimes[originID] = timez
 		}
 
-		initializeTimes := map[string]int64{}
-		startTimes := map[string]int64{}
-		finishTimes := map[string]int64{}
-
-		for _, currentEvent := range events {
-			if strings.HasPrefix(string(currentEvent.EventType()), "initialize-") {
-				originID, timez, err := GetOriginAndTime(currentEvent)
-				if err != nil {
-					return nil, errors.Wrap(err, "failed to get origin and time for an initialize- event")
-				}
-				initializeTimes[originID] = timez
+		if strings.HasPrefix(string(currentEvent.EventType()), "start-") {
+			originID, timez, err := GetOriginAndTime(currentEvent)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to get origin and time for an start- event")
 			}
-
-			if strings.HasPrefix(string(currentEvent.EventType()), "start-") {
-				originID, timez, err := GetOriginAndTime(currentEvent)
-				if err != nil {
-					return nil, errors.Wrap(err, "failed to get origin and time for an start- event")
-				}
-				startTimes[originID] = timez
-			}
-
-			if strings.HasPrefix(string(currentEvent.EventType()), "finish-") {
-				originID, timez, err := GetOriginAndTime(currentEvent)
-				if err != nil {
-					return nil, errors.Wrap(err, "failed to get origin and time for an finish- event")
-				}
-				finishTimes[originID] = timez
-			}
+			startTimes[originID] = timez
 		}
 
-		for _, value := range someTaskMetrics {
-			value.JobName = build.JobName
-			value.PipelineName = build.PipelineName
-			value.BuildName = build.Name
-			value.TeamName = build.TeamName
-
-			value.InitializeTime = initializeTimes[value.ID]
-			value.StartTime = startTimes[value.ID]
-			value.FinishTime = finishTimes[value.ID]
-
-			UglyPrint(value)
+		if strings.HasPrefix(string(currentEvent.EventType()), "finish-") {
+			originID, timez, err := GetOriginAndTime(currentEvent)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to get origin and time for an finish- event")
+			}
+			finishTimes[originID] = timez
 		}
 	}
 
-	return allTaskMetrics, nil
+	for key, value := range taskMetrics {
+		value.PipelineName = build.PipelineName
+		value.JobName = build.JobName
+		value.BuildName = build.Name
+		value.TeamName = build.TeamName
+
+		value.InitializeTime = initializeTimes[value.ID]
+		value.StartTime = startTimes[value.ID]
+		value.FinishTime = finishTimes[value.ID]
+
+		taskMetrics[key] = value
+	}
+
+	return taskMetrics, nil
 }
 
 func GetToken(config Config) (rc.Target, error) {
@@ -336,18 +369,27 @@ func GetToken(config Config) (rc.Target, error) {
 }
 
 func main() {
-	configPath := flag.String("config-path", "", "help message for flagname")
+	configPath := flag.String("config-path", "", "please provide the path to your config file")
+	cachePath := flag.String("cache-path", "", "please provide the path to your cache file")
 	flag.Parse()
 
 	logger := lager.NewLogger("blackbox")
 	logger.RegisterSink(lager.NewWriterSink(os.Stderr, lager.DEBUG))
 
-	//minusOneHour, _ := time.ParseDuration("-200h")
-	//oneHourAgo := time.Now().Add(minusOneHour)
-	//fmt.Println(oneHourAgo)
+	//someTimeAgo := time.Now().AddDate(0, -3, 0)
+	//logger.Debug("some-time-ago", lager.Data{"someTimeAgo": someTimeAgo})
 
 	logger.Debug("reading-config", lager.Data{"configPath": *configPath})
-	config := ReadConfig(*configPath)
+	config, err := ReadConfig(*configPath)
+	if err != nil {
+		logger.Fatal("reading-config-failed", err)
+	}
+
+	logger.Debug("reading-cache", lager.Data{"cachePath": *cachePath})
+	cache, err := ReadCache(*cachePath)
+	if err != nil {
+		logger.Fatal("reading-cache-failed", err)
+	}
 
 	logger.Debug("get-token")
 	target, err := GetToken(config)
@@ -362,9 +404,23 @@ func main() {
 	logger.Debug("filtering-builds")
 	builds := FilterBuilds(target.Team(), time.Unix(0, 0))
 
-	logger.Debug("getting-metrics")
-	_, err = GetMetrics(target.Client(), builds)
-	if err != nil {
-		logger.Fatal("get-metrics-failed", err)
+	for i, build := range builds {
+		if cache.IsProcessed(build.ID) {
+			logger.Debug("build-already-processed", lager.Data{"build-id": build.ID})
+			continue
+		}
+
+		logger.Debug("getting-metrics", lager.Data{"build": build, "current-index": i, "max-index": len(builds)})
+		metrics, err := GetMetrics(target.Client(), build)
+		if err != nil {
+			logger.Fatal("get-metrics-failed", err)
+		}
+
+		for _, metric := range metrics {
+			UglyPrint(metric)
+		}
+
+		cache.MarkProcessed(build.ID)
+		WriteCache(*cachePath, cache)
 	}
 }
