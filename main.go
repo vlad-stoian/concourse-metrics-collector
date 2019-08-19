@@ -1,23 +1,26 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"golang.org/x/oauth2"
+
+	"github.com/concourse/concourse/fly/commands"
+
+	"github.com/pkg/errors"
+
 	"io"
 	"io/ioutil"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
-	"github.com/concourse/atc"
-	"github.com/concourse/atc/event"
-
-	"github.com/concourse/fly/rc"
-	"github.com/concourse/go-concourse/concourse"
-	"gopkg.in/zorkian/go-datadog-api.v2"
+	"code.cloudfoundry.org/lager"
+	"github.com/concourse/concourse/atc"
+	"github.com/concourse/concourse/atc/event"
+	"github.com/concourse/concourse/fly/rc"
+	"github.com/concourse/concourse/go-concourse/concourse"
 )
 
 type ConcourseConfig struct {
@@ -40,23 +43,19 @@ type Config struct {
 }
 
 type TaskMetric struct {
-	ID        string
-	Name      string
-	StartTime int64
-	EndTime   int64
+	ID   string `json:"id"`
+	Name string `json:"name"`
 
-	Type string
-	Tags []string
-}
+	InitializeTime int64 `json:"initialize_time"`
+	StartTime      int64 `json:"start_time"`
+	FinishTime     int64 `json:"finish_time"`
 
-func (em *TaskMetric) UpdateTime(timestamp int64) {
-	if em.StartTime == 0 || timestamp < em.StartTime {
-		em.StartTime = timestamp
-	}
+	Type string `json:"type"`
 
-	if em.EndTime == 0 || timestamp > em.EndTime {
-		em.EndTime = timestamp
-	}
+	PipelineName string `json:"pipeline_name"`
+	JobName      string `json:"job_name"`
+	BuildName    string `json:"build_name"`
+	TeamName     string `json:"team_name"`
 }
 
 func ReadConfig(configPath string) Config {
@@ -74,43 +73,6 @@ func ReadConfig(configPath string) Config {
 	}
 
 	return config
-}
-
-func GetTarget(config Config) rc.Target {
-	oauth2Config := oauth2.Config{
-		ClientID:     "fly",
-		ClientSecret: "Zmx5",
-		Endpoint:     oauth2.Endpoint{TokenURL: config.Concourse.URL + "/sky/token"},
-		Scopes:       []string{"openid", "profile", "email", "federated:id", "groups"},
-	}
-
-	ctx := context.TODO()
-
-	token, err := oauth2Config.PasswordCredentialsToken(ctx, config.Concourse.Username, config.Concourse.Password)
-	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
-	}
-
-	fmt.Println("Save Target")
-	err = rc.SaveTarget(
-		config.Concourse.Target,
-		config.Concourse.URL,
-		true,
-		config.Concourse.Team,
-		&rc.TargetToken{
-			Type:  token.TokenType,
-			Value: token.AccessToken,
-		},
-		"")
-
-	target, err := rc.LoadTarget(config.Concourse.Target, false)
-	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
-	}
-
-	return target
 }
 
 func FilterBuilds(team concourse.Team, timeAgo time.Time) []atc.Build {
@@ -149,16 +111,31 @@ func CollectIDs(plan atc.Plan, ids map[string]TaskMetric) {
 		}
 	}
 
+	if plan.InParallel != nil {
+		for _, p1 := range plan.InParallel.Steps {
+			CollectIDs(p1, ids)
+		}
+	}
+
 	if plan.Do != nil {
 		for _, p1 := range *plan.Do {
 			CollectIDs(p1, ids)
 		}
 	}
 
-	if plan.Retry != nil {
-		for _, p1 := range *plan.Retry {
-			CollectIDs(p1, ids)
-		}
+	if plan.OnAbort != nil {
+		CollectIDs(plan.OnAbort.Step, ids)
+		CollectIDs(plan.OnAbort.Next, ids)
+	}
+
+	if plan.OnError != nil {
+		CollectIDs(plan.OnError.Step, ids)
+		CollectIDs(plan.OnError.Next, ids)
+	}
+
+	if plan.Ensure != nil {
+		CollectIDs(plan.Ensure.Step, ids)
+		CollectIDs(plan.Ensure.Next, ids)
 	}
 
 	if plan.OnSuccess != nil {
@@ -171,22 +148,18 @@ func CollectIDs(plan atc.Plan, ids map[string]TaskMetric) {
 		CollectIDs(plan.OnFailure.Next, ids)
 	}
 
-	if plan.OnAbort != nil {
-		CollectIDs(plan.OnAbort.Step, ids)
-		CollectIDs(plan.OnAbort.Next, ids)
-	}
-
-	if plan.Ensure != nil {
-		CollectIDs(plan.Ensure.Step, ids)
-		CollectIDs(plan.Ensure.Next, ids)
-	}
-
 	if plan.Try != nil {
 		CollectIDs(plan.Try.Step, ids)
 	}
 
 	if plan.Timeout != nil {
 		CollectIDs(plan.Timeout.Step, ids)
+	}
+
+	if plan.Retry != nil {
+		for _, p1 := range *plan.Retry {
+			CollectIDs(p1, ids)
+		}
 	}
 
 	planID := string(plan.ID)
@@ -201,7 +174,7 @@ func CollectIDs(plan atc.Plan, ids map[string]TaskMetric) {
 
 	if plan.Get != nil {
 		ids[planID] = TaskMetric{
-			ID:   string(planID),
+			ID:   planID,
 			Name: plan.Get.Name,
 			Type: "get",
 		}
@@ -209,66 +182,70 @@ func CollectIDs(plan atc.Plan, ids map[string]TaskMetric) {
 
 	if plan.Put != nil {
 		ids[planID] = TaskMetric{
-			ID:   string(planID),
+			ID:   planID,
 			Name: plan.Put.Name,
 			Type: "put",
 		}
 	}
 }
 
-func CollectEventTimestamps(events []atc.Event, ids map[string]TaskMetric) {
-	//event.Error{}
-	//event.FinishTask{} +1
-	//event.InitializeTask{}
-	//event.StartTask{} +1 // sets the timestamp to 0 always
-	//event.Log{} +1
-	//event.FinishGet{}
-	//event.FinishPut{}
-
-	for _, currentEvent := range events {
-		switch e := currentEvent.(type) {
-		case event.Log:
-			originID := string(e.Origin.ID)
-
-			currentMetric := ids[originID]
-			currentMetric.UpdateTime(e.Time)
-			ids[originID] = currentMetric
-
-		default:
-			// Skipping
-		}
-	}
-
-}
-
 func PrettyPrint(v interface{}) {
 	b, _ := json.MarshalIndent(v, "", "  ")
-	println(string(b))
+	fmt.Println(string(b))
 }
 
-func GetMetrics(client concourse.Client, builds []atc.Build) map[string]TaskMetric {
+func UglyPrint(v interface{}) {
+	b, _ := json.Marshal(v)
+	fmt.Println(string(b))
+}
+
+type GenericEvent struct {
+	Origin struct {
+		ID string `json:"id"`
+	} `json:"origin"`
+	Time int64 `json:"time"`
+}
+
+func GetOriginAndTime(event atc.Event) (string, int64, error) {
+	eventBytes, err := json.Marshal(event)
+	if err != nil {
+		return "", 0, errors.Wrap(err, "event marshaling failed")
+	}
+
+	var genericEvent GenericEvent
+	err = json.Unmarshal(eventBytes, &genericEvent)
+	if err != nil {
+		return "", 0, errors.Wrap(err, "event unmarshaling failed")
+	}
+
+	return genericEvent.Origin.ID, genericEvent.Time, nil
+}
+
+func GetMetrics(client concourse.Client, builds []atc.Build) (map[string]TaskMetric, error) {
 	allTaskMetrics := map[string]TaskMetric{}
 
 	for _, build := range builds {
 
+		_, _ = fmt.Fprintf(os.Stderr, "Build %d, unix %d, time %s\n", build.ID, build.StartTime, time.Unix(build.StartTime, 0))
+
 		someTaskMetrics := map[string]TaskMetric{}
 
-		buildPublicPlan, _, _ := client.BuildPlan(build.ID) // TODO: Check error
+		buildPublicPlan, _, err := client.BuildPlan(build.ID) // TODO: Check error
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get build plan")
+		}
 
 		var buildPlan atc.Plan
-		err := json.Unmarshal(*buildPublicPlan.Plan, &buildPlan)
+		err = json.Unmarshal(*buildPublicPlan.Plan, &buildPlan)
 		if err != nil {
-			fmt.Println(err.Error())
-			os.Exit(1)
+			return nil, errors.Wrap(err, "failed to unmarshal build plan")
 		}
 
 		CollectIDs(buildPlan, someTaskMetrics)
 
-		// Start getting buildEvents
 		buildEvents, err := client.BuildEvents(strconv.Itoa(build.ID))
 		if err != nil {
-			fmt.Println(err.Error())
-			os.Exit(1)
+			return nil, errors.Wrap(err, "failed to get build events")
 		}
 
 		// https://github.com/concourse/fly/blob/03cd3175e8c409f35d107c201f0068757d920311/eventstream/render.go
@@ -281,89 +258,113 @@ func GetMetrics(client concourse.Client, builds []atc.Build) map[string]TaskMetr
 					break
 				}
 
-				fmt.Println(err.Error())
-				os.Exit(1)
+				return nil, errors.Wrap(err, "failed to get the next event")
 			}
 
 			events = append(events, streamEvent)
 		}
 
-		CollectEventTimestamps(events, someTaskMetrics)
+		initializeTimes := map[string]int64{}
+		startTimes := map[string]int64{}
+		finishTimes := map[string]int64{}
 
-		for key, value := range someTaskMetrics {
-			value.Tags = []string{
-				fmt.Sprintf("job-name:%s", build.JobName),
-				fmt.Sprintf("build-name:%s", build.Name),
-				fmt.Sprintf("build-id:%d", build.ID),
-				fmt.Sprintf("build-status:%s", build.Status),
-				fmt.Sprintf("pipeline-name:%s", build.PipelineName),
-				fmt.Sprintf("team-name:%s", build.TeamName),
-				fmt.Sprintf("task-type:%s", value.Type),
-				fmt.Sprintf("task-name:%s", value.Name),
-				fmt.Sprintf("task-id:%s", value.ID),
+		for _, currentEvent := range events {
+			if strings.HasPrefix(string(currentEvent.EventType()), "initialize-") {
+				originID, timez, err := GetOriginAndTime(currentEvent)
+				if err != nil {
+					return nil, errors.Wrap(err, "failed to get origin and time for an initialize- event")
+				}
+				initializeTimes[originID] = timez
 			}
 
-			allTaskMetrics[key] = value
+			if strings.HasPrefix(string(currentEvent.EventType()), "start-") {
+				originID, timez, err := GetOriginAndTime(currentEvent)
+				if err != nil {
+					return nil, errors.Wrap(err, "failed to get origin and time for an start- event")
+				}
+				startTimes[originID] = timez
+			}
+
+			if strings.HasPrefix(string(currentEvent.EventType()), "finish-") {
+				originID, timez, err := GetOriginAndTime(currentEvent)
+				if err != nil {
+					return nil, errors.Wrap(err, "failed to get origin and time for an finish- event")
+				}
+				finishTimes[originID] = timez
+			}
+		}
+
+		for _, value := range someTaskMetrics {
+			value.JobName = build.JobName
+			value.PipelineName = build.PipelineName
+			value.BuildName = build.Name
+			value.TeamName = build.TeamName
+
+			value.InitializeTime = initializeTimes[value.ID]
+			value.StartTime = startTimes[value.ID]
+			value.FinishTime = finishTimes[value.ID]
+
+			UglyPrint(value)
 		}
 	}
 
-	return allTaskMetrics
+	return allTaskMetrics, nil
 }
 
-func PublishMetrics(datadogConfig DatadogConfig, taskMetrics map[string]TaskMetric) {
-	datadogClient := datadog.NewClient(datadogConfig.APIKey, datadogConfig.APPKey)
-
-	metricName := fmt.Sprintf("%s.tasks", datadogConfig.MetricPrefix)
-
-	var metrics []datadog.Metric
-
-	for _, value := range taskMetrics {
-		metric := datadog.Metric{}
-		metric.SetMetric(metricName)
-		metric.SetUnit("")
-		metric.Tags = value.Tags
-
-		endTime := value.EndTime
-		if endTime == 0 {
-			endTime = time.Now().Unix()
-		}
-
-		taskDuration := time.Unix(value.EndTime, 0).Sub(time.Unix(value.StartTime, 0))
-
-		metric.Points = append(metric.Points, datadog.DataPoint{float64(endTime), taskDuration.Minutes()})
-
-		metrics = append(metrics, metric)
+func GetToken(config Config) (rc.Target, error) {
+	target, err := rc.LoadTarget(config.Concourse.Target, false)
+	if err != nil {
+		return nil, errors.Wrap(err, "load target failed")
 	}
 
-	fmt.Println("About to send metrics to datadog")
-	PrettyPrint(metrics)
+	err = target.Validate()
 
-	datadogClient.PostMetrics(metrics)
+	if err != nil {
+		if strings.HasSuffix(err.Error(), "not authorized") {
+			commands.Fly.Target = config.Concourse.Target
+			login := &commands.LoginCommand{BrowserOnly: true}
+			err := login.Execute([]string{})
+			if err != nil {
+				return nil, errors.Wrap(err, "login command failed")
+			}
+		} else {
+			return nil, errors.Wrap(err, "validate failed")
+		}
+	}
+
+	return target, nil
 }
 
 func main() {
 	configPath := flag.String("config-path", "", "help message for flagname")
 	flag.Parse()
 
-	minusOneHour, _ := time.ParseDuration("-1h")
-	oneHourAgo := time.Now().Add(minusOneHour)
-	fmt.Println(oneHourAgo)
+	logger := lager.NewLogger("blackbox")
+	logger.RegisterSink(lager.NewWriterSink(os.Stderr, lager.DEBUG))
 
-	fmt.Println("Reading config from: ", *configPath)
+	//minusOneHour, _ := time.ParseDuration("-200h")
+	//oneHourAgo := time.Now().Add(minusOneHour)
+	//fmt.Println(oneHourAgo)
+
+	logger.Debug("reading-config", lager.Data{"configPath": *configPath})
 	config := ReadConfig(*configPath)
 
-	//fmt.Println(config)
+	logger.Debug("get-token")
+	target, err := GetToken(config)
+	if err != nil {
+		logger.Fatal("get-token-failed", err)
+	}
 
-	fmt.Println("Getting target")
-	target := GetTarget(config)
+	// Should be fixed once this gets merged: https://github.com/concourse/concourse/pull/4291
+	event.RegisterEvent(event.InitializeGet{})
+	event.RegisterEvent(event.InitializePut{})
 
-	fmt.Println("Filtering builds")
-	builds := FilterBuilds(target.Team(), oneHourAgo)
+	logger.Debug("filtering-builds")
+	builds := FilterBuilds(target.Team(), time.Unix(0, 0))
 
-	metrics := GetMetrics(target.Client(), builds)
-
-	fmt.Println("Gathered metrics from everywhere")
-	PrettyPrint(metrics)
-
-	//PublishMetrics(config.Datadog, metrics)
+	logger.Debug("getting-metrics")
+	_, err = GetMetrics(target.Client(), builds)
+	if err != nil {
+		logger.Fatal("get-metrics-failed", err)
+	}
 }
