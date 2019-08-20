@@ -39,20 +39,29 @@ type Cache struct {
 	Processed map[int]bool `json:"processed"`
 }
 
+type BuildMetric struct {
+	ID        int    `json:"id"`
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	StartTime int64  `json:"start_time"`
+	EndTime   int64  `json:"end_time"`
+
+	TeamName     string `json:"team_name"`
+	PipelineName string `json:"pipeline_name"`
+	JobName      string `json:"job_name"`
+
+	Tasks []TaskMetric `json:"tasks"`
+}
+
 type TaskMetric struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	BuildId int    `json:"build_id"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Type    string `json:"type"`
 
 	InitializeTime int64 `json:"initialize_time"`
 	StartTime      int64 `json:"start_time"`
 	FinishTime     int64 `json:"finish_time"`
-
-	Type string `json:"type"`
-
-	PipelineName string `json:"pipeline_name"`
-	JobName      string `json:"job_name"`
-	BuildName    string `json:"build_name"`
-	TeamName     string `json:"team_name"`
 }
 
 func ReadConfig(configPath string) (Config, error) {
@@ -258,29 +267,29 @@ func GetOriginAndTime(event atc.Event) (string, int64, error) {
 	return genericEvent.Origin.ID, genericEvent.Time, nil
 }
 
-func GetMetrics(client concourse.Client, build atc.Build) (map[string]TaskMetric, error) {
+func GetMetrics(client concourse.Client, build atc.Build) (BuildMetric, error) {
 	taskMetrics := map[string]TaskMetric{}
 
-	buildPublicPlan, found, err := client.BuildPlan(build.ID) // TODO: Check error
+	buildPublicPlan, found, err := client.BuildPlan(build.ID)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get build plan")
+		return BuildMetric{}, errors.Wrap(err, "failed to get build plan")
 	}
 
 	if !found {
-		return taskMetrics, nil
+		return BuildMetric{}, nil
 	}
 
 	var buildPlan atc.Plan
 	err = json.Unmarshal(*buildPublicPlan.Plan, &buildPlan)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to unmarshal build plan")
+		return BuildMetric{}, errors.Wrap(err, "failed to unmarshal build plan")
 	}
 
 	CollectIDs(buildPlan, taskMetrics)
 
 	buildEvents, err := client.BuildEvents(strconv.Itoa(build.ID))
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get build events")
+		return BuildMetric{}, errors.Wrap(err, "failed to get build events")
 	}
 
 	// https://github.com/concourse/concourse/blob/09aecaa35913a78a475f72abdb33783903fa3f3b/fly/eventstream/render.go
@@ -292,7 +301,7 @@ func GetMetrics(client concourse.Client, build atc.Build) (map[string]TaskMetric
 				break
 			}
 
-			return nil, errors.Wrap(err, "failed to get the next event")
+			return BuildMetric{}, errors.Wrap(err, "failed to get the next event")
 		}
 
 		events = append(events, streamEvent)
@@ -306,7 +315,7 @@ func GetMetrics(client concourse.Client, build atc.Build) (map[string]TaskMetric
 		if strings.HasPrefix(string(currentEvent.EventType()), "initialize-") {
 			originID, timez, err := GetOriginAndTime(currentEvent)
 			if err != nil {
-				return nil, errors.Wrap(err, "failed to get origin and time for an initialize- event")
+				return BuildMetric{}, errors.Wrap(err, "failed to get origin and time for an initialize- event")
 			}
 			initializeTimes[originID] = timez
 		}
@@ -314,7 +323,7 @@ func GetMetrics(client concourse.Client, build atc.Build) (map[string]TaskMetric
 		if strings.HasPrefix(string(currentEvent.EventType()), "start-") {
 			originID, timez, err := GetOriginAndTime(currentEvent)
 			if err != nil {
-				return nil, errors.Wrap(err, "failed to get origin and time for an start- event")
+				return BuildMetric{}, errors.Wrap(err, "failed to get origin and time for an start- event")
 			}
 			startTimes[originID] = timez
 		}
@@ -322,26 +331,35 @@ func GetMetrics(client concourse.Client, build atc.Build) (map[string]TaskMetric
 		if strings.HasPrefix(string(currentEvent.EventType()), "finish-") {
 			originID, timez, err := GetOriginAndTime(currentEvent)
 			if err != nil {
-				return nil, errors.Wrap(err, "failed to get origin and time for an finish- event")
+				return BuildMetric{}, errors.Wrap(err, "failed to get origin and time for an finish- event")
 			}
 			finishTimes[originID] = timez
 		}
 	}
 
-	for key, value := range taskMetrics {
-		value.PipelineName = build.PipelineName
-		value.JobName = build.JobName
-		value.BuildName = build.Name
-		value.TeamName = build.TeamName
+	var allTaskMetrics []TaskMetric
+	for _, value := range taskMetrics {
+		value.BuildId = build.ID
 
 		value.InitializeTime = initializeTimes[value.ID]
 		value.StartTime = startTimes[value.ID]
 		value.FinishTime = finishTimes[value.ID]
 
-		taskMetrics[key] = value
+		allTaskMetrics = append(allTaskMetrics, value)
 	}
 
-	return taskMetrics, nil
+	return BuildMetric{
+		ID:        build.ID,
+		Name:      build.Name,
+		Status:    build.Status,
+		StartTime: build.StartTime,
+		EndTime:   build.EndTime,
+
+		TeamName:     build.TeamName,
+		PipelineName: build.PipelineName,
+		JobName:      build.JobName,
+		Tasks:        allTaskMetrics,
+	}, nil
 }
 
 func GetToken(config Config) (rc.Target, error) {
@@ -411,14 +429,12 @@ func main() {
 		}
 
 		logger.Debug("getting-metrics", lager.Data{"build": build, "current-index": i, "max-index": len(builds)})
-		metrics, err := GetMetrics(target.Client(), build)
+		buildMetric, err := GetMetrics(target.Client(), build)
 		if err != nil {
 			logger.Fatal("get-metrics-failed", err)
 		}
 
-		for _, metric := range metrics {
-			UglyPrint(metric)
-		}
+		UglyPrint(buildMetric)
 
 		cache.MarkProcessed(build.ID)
 		WriteCache(*cachePath, cache)
