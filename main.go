@@ -3,12 +3,6 @@ package main
 import (
 	"encoding/json"
 	"flag"
-	"fmt"
-
-	"github.com/concourse/concourse/fly/commands"
-
-	"github.com/pkg/errors"
-
 	"io"
 	"io/ioutil"
 	"os"
@@ -19,8 +13,13 @@ import (
 	"code.cloudfoundry.org/lager"
 	"github.com/concourse/concourse/atc"
 	"github.com/concourse/concourse/atc/event"
+	"github.com/concourse/concourse/fly/commands"
 	"github.com/concourse/concourse/fly/rc"
 	"github.com/concourse/concourse/go-concourse/concourse"
+	"github.com/pkg/errors"
+	"github.com/vlad-stoian/concourse-metrics-collector/internal/pkg/cache"
+	"github.com/vlad-stoian/concourse-metrics-collector/internal/pkg/models"
+	"github.com/vlad-stoian/concourse-metrics-collector/internal/pkg/utils"
 )
 
 type ConcourseConfig struct {
@@ -33,35 +32,6 @@ type ConcourseConfig struct {
 
 type Config struct {
 	Concourse ConcourseConfig `json:"concourse"`
-}
-
-type Cache struct {
-	Processed map[int]bool `json:"processed"`
-}
-
-type BuildMetric struct {
-	ID        int    `json:"id"`
-	Name      string `json:"name"`
-	Status    string `json:"status"`
-	StartTime int64  `json:"start_time"`
-	EndTime   int64  `json:"end_time"`
-
-	TeamName     string `json:"team_name"`
-	PipelineName string `json:"pipeline_name"`
-	JobName      string `json:"job_name"`
-
-	Tasks []TaskMetric `json:"tasks"`
-}
-
-type TaskMetric struct {
-	BuildId int    `json:"build_id"`
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Type    string `json:"type"`
-
-	InitializeTime int64 `json:"initialize_time"`
-	StartTime      int64 `json:"start_time"`
-	FinishTime     int64 `json:"finish_time"`
 }
 
 func ReadConfig(configPath string) (Config, error) {
@@ -79,217 +49,29 @@ func ReadConfig(configPath string) (Config, error) {
 	return config, nil
 }
 
-func ReadCache(cachePath string) (Cache, error) {
-	raw, err := ioutil.ReadFile(cachePath)
-	if os.IsNotExist(err) {
-		return Cache{Processed: map[int]bool{}}, nil
-	}
-
-	if err != nil {
-		return Cache{}, errors.Wrap(err, "failed-to-read-cache-file")
-	}
-
-	var cache Cache
-	err = json.Unmarshal(raw, &cache)
-	if err != nil {
-		return Cache{}, errors.Wrap(err, "failed-to-unmarshal-cache")
-	}
-
-	return cache, nil
-}
-
-func WriteCache(cachePath string, cache Cache) {
-	raw, err := json.Marshal(cache)
-	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
-	}
-
-	err = ioutil.WriteFile(cachePath, raw, 0644)
-	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
-	}
-}
-
-func (c *Cache) IsProcessed(buildID int) bool {
-	wasProcessed, ok := c.Processed[buildID]
-	return ok && wasProcessed
-}
-
-func (c *Cache) MarkProcessed(buildID int) {
-	c.Processed[buildID] = true
-}
-
-func FilterBuilds(team concourse.Team, timeAgo time.Time) []atc.Build {
-	var builds []atc.Build
-
-	pipelines, _ := team.ListPipelines()
-	for _, pipeline := range pipelines {
-
-		jobs, _ := team.ListJobs(pipeline.Name)
-
-		for _, job := range jobs {
-			page := concourse.Page{Limit: 0}
-			jobBuilds, _, _, _ := team.JobBuilds(pipeline.Name, job.Name, page)
-
-			for _, jobBuild := range jobBuilds {
-				buildTime := time.Unix(jobBuild.EndTime, 0)
-
-				if jobBuild.IsRunning() || jobBuild.OneOff() {
-					continue
-				}
-
-				if buildTime.After(timeAgo) {
-					builds = append(builds, jobBuild)
-				}
-			}
-		}
-	}
-
-	return builds
-}
-
-func CollectIDs(plan atc.Plan, ids map[string]TaskMetric) {
-	if plan.Aggregate != nil {
-		for _, p1 := range *plan.Aggregate {
-			CollectIDs(p1, ids)
-		}
-	}
-
-	if plan.InParallel != nil {
-		for _, p1 := range plan.InParallel.Steps {
-			CollectIDs(p1, ids)
-		}
-	}
-
-	if plan.Do != nil {
-		for _, p1 := range *plan.Do {
-			CollectIDs(p1, ids)
-		}
-	}
-
-	if plan.OnAbort != nil {
-		CollectIDs(plan.OnAbort.Step, ids)
-		CollectIDs(plan.OnAbort.Next, ids)
-	}
-
-	if plan.OnError != nil {
-		CollectIDs(plan.OnError.Step, ids)
-		CollectIDs(plan.OnError.Next, ids)
-	}
-
-	if plan.Ensure != nil {
-		CollectIDs(plan.Ensure.Step, ids)
-		CollectIDs(plan.Ensure.Next, ids)
-	}
-
-	if plan.OnSuccess != nil {
-		CollectIDs(plan.OnSuccess.Step, ids)
-		CollectIDs(plan.OnSuccess.Next, ids)
-	}
-
-	if plan.OnFailure != nil {
-		CollectIDs(plan.OnFailure.Step, ids)
-		CollectIDs(plan.OnFailure.Next, ids)
-	}
-
-	if plan.Try != nil {
-		CollectIDs(plan.Try.Step, ids)
-	}
-
-	if plan.Timeout != nil {
-		CollectIDs(plan.Timeout.Step, ids)
-	}
-
-	if plan.Retry != nil {
-		for _, p1 := range *plan.Retry {
-			CollectIDs(p1, ids)
-		}
-	}
-
-	planID := string(plan.ID)
-
-	if plan.Task != nil {
-		ids[planID] = TaskMetric{
-			ID:   planID,
-			Name: plan.Task.Name,
-			Type: "task",
-		}
-	}
-
-	if plan.Get != nil {
-		ids[planID] = TaskMetric{
-			ID:   planID,
-			Name: plan.Get.Name,
-			Type: "get",
-		}
-	}
-
-	if plan.Put != nil {
-		ids[planID] = TaskMetric{
-			ID:   planID,
-			Name: plan.Put.Name,
-			Type: "put",
-		}
-	}
-}
-
-func PrettyPrint(v interface{}) {
-	b, _ := json.MarshalIndent(v, "", "  ")
-	fmt.Println(string(b))
-}
-
-func UglyPrint(v interface{}) {
-	b, _ := json.Marshal(v)
-	fmt.Println(string(b))
-}
-
-type GenericEvent struct {
-	Origin struct {
-		ID string `json:"id"`
-	} `json:"origin"`
-	Time int64 `json:"time"`
-}
-
-func GetOriginAndTime(event atc.Event) (string, int64, error) {
-	eventBytes, err := json.Marshal(event)
-	if err != nil {
-		return "", 0, errors.Wrap(err, "event marshaling failed")
-	}
-
-	var genericEvent GenericEvent
-	err = json.Unmarshal(eventBytes, &genericEvent)
-	if err != nil {
-		return "", 0, errors.Wrap(err, "event unmarshaling failed")
-	}
-
-	return genericEvent.Origin.ID, genericEvent.Time, nil
-}
-
-func GetMetrics(client concourse.Client, build atc.Build) (BuildMetric, error) {
-	taskMetrics := map[string]TaskMetric{}
+func GetMetrics(client concourse.Client, build atc.Build) (models.BuildMetric, error) {
+	taskMetrics := map[string]models.TaskMetric{}
 
 	buildPublicPlan, found, err := client.BuildPlan(build.ID)
 	if err != nil {
-		return BuildMetric{}, errors.Wrap(err, "failed to get build plan")
+		return models.BuildMetric{}, errors.Wrap(err, "failed to get build plan")
 	}
 
 	if !found {
-		return BuildMetric{}, nil
+		return models.BuildMetric{}, nil
 	}
 
 	var buildPlan atc.Plan
 	err = json.Unmarshal(*buildPublicPlan.Plan, &buildPlan)
 	if err != nil {
-		return BuildMetric{}, errors.Wrap(err, "failed to unmarshal build plan")
+		return models.BuildMetric{}, errors.Wrap(err, "failed to unmarshal build plan")
 	}
 
-	CollectIDs(buildPlan, taskMetrics)
+	utils.CollectIDs(buildPlan, taskMetrics)
 
 	buildEvents, err := client.BuildEvents(strconv.Itoa(build.ID))
 	if err != nil {
-		return BuildMetric{}, errors.Wrap(err, "failed to get build events")
+		return models.BuildMetric{}, errors.Wrap(err, "failed to get build events")
 	}
 
 	// https://github.com/concourse/concourse/blob/09aecaa35913a78a475f72abdb33783903fa3f3b/fly/eventstream/render.go
@@ -301,7 +83,7 @@ func GetMetrics(client concourse.Client, build atc.Build) (BuildMetric, error) {
 				break
 			}
 
-			return BuildMetric{}, errors.Wrap(err, "failed to get the next event")
+			return models.BuildMetric{}, errors.Wrap(err, "failed to get the next event")
 		}
 
 		events = append(events, streamEvent)
@@ -313,31 +95,31 @@ func GetMetrics(client concourse.Client, build atc.Build) (BuildMetric, error) {
 
 	for _, currentEvent := range events {
 		if strings.HasPrefix(string(currentEvent.EventType()), "initialize-") {
-			originID, timez, err := GetOriginAndTime(currentEvent)
+			originID, timez, err := utils.GetOriginAndTime(currentEvent)
 			if err != nil {
-				return BuildMetric{}, errors.Wrap(err, "failed to get origin and time for an initialize- event")
+				return models.BuildMetric{}, errors.Wrap(err, "failed to get origin and time for an initialize- event")
 			}
 			initializeTimes[originID] = timez
 		}
 
 		if strings.HasPrefix(string(currentEvent.EventType()), "start-") {
-			originID, timez, err := GetOriginAndTime(currentEvent)
+			originID, timez, err := utils.GetOriginAndTime(currentEvent)
 			if err != nil {
-				return BuildMetric{}, errors.Wrap(err, "failed to get origin and time for an start- event")
+				return models.BuildMetric{}, errors.Wrap(err, "failed to get origin and time for an start- event")
 			}
 			startTimes[originID] = timez
 		}
 
 		if strings.HasPrefix(string(currentEvent.EventType()), "finish-") {
-			originID, timez, err := GetOriginAndTime(currentEvent)
+			originID, timez, err := utils.GetOriginAndTime(currentEvent)
 			if err != nil {
-				return BuildMetric{}, errors.Wrap(err, "failed to get origin and time for an finish- event")
+				return models.BuildMetric{}, errors.Wrap(err, "failed to get origin and time for an finish- event")
 			}
 			finishTimes[originID] = timez
 		}
 	}
 
-	var allTaskMetrics []TaskMetric
+	var allTaskMetrics []models.TaskMetric
 	for _, value := range taskMetrics {
 		value.BuildId = build.ID
 
@@ -348,7 +130,7 @@ func GetMetrics(client concourse.Client, build atc.Build) (BuildMetric, error) {
 		allTaskMetrics = append(allTaskMetrics, value)
 	}
 
-	return BuildMetric{
+	return models.BuildMetric{
 		ID:        build.ID,
 		Name:      build.Name,
 		Status:    build.Status,
@@ -404,7 +186,7 @@ func main() {
 	}
 
 	logger.Debug("reading-cache", lager.Data{"cachePath": *cachePath})
-	cache, err := ReadCache(*cachePath)
+	cacher, err := cache.NewCache(*cachePath)
 	if err != nil {
 		logger.Fatal("reading-cache-failed", err)
 	}
@@ -420,10 +202,10 @@ func main() {
 	event.RegisterEvent(event.InitializePut{})
 
 	logger.Debug("filtering-builds")
-	builds := FilterBuilds(target.Team(), time.Unix(0, 0))
+	builds := utils.FilterBuilds(target.Team(), time.Unix(0, 0))
 
 	for i, build := range builds {
-		if cache.IsProcessed(build.ID) {
+		if cacher.IsProcessed(build.ID) {
 			logger.Debug("build-already-processed", lager.Data{"build-id": build.ID})
 			continue
 		}
@@ -434,9 +216,8 @@ func main() {
 			logger.Fatal("get-metrics-failed", err)
 		}
 
-		UglyPrint(buildMetric)
+		utils.UglyPrint(buildMetric)
 
-		cache.MarkProcessed(build.ID)
-		WriteCache(*cachePath, cache)
+		cacher.MarkProcessed(build.ID)
 	}
 }
