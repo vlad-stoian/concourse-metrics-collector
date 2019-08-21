@@ -64,89 +64,89 @@ func FilterBuilds(team concourse.Team, timeAgo time.Time) []atc.Build {
 	return builds
 }
 
-func CollectIDs(plan atc.Plan, ids map[string]models.TaskMetric) {
-	if plan.Aggregate != nil {
-		for _, p1 := range *plan.Aggregate {
-			CollectIDs(p1, ids)
+func CollectIDs(plan atc.Plan) map[string]models.TaskMetric {
+	plans := []atc.Plan{
+		plan,
+	}
+
+	taskMetrics := map[string]models.TaskMetric{}
+
+	for len(plans) > 0 {
+		currentPlan := plans[0]
+		plans = plans[1:] //pop
+
+		currentPlanID := string(currentPlan.ID)
+
+		if currentPlan.Task != nil {
+			taskMetrics[currentPlanID] = models.TaskMetric{
+				ID:   currentPlanID,
+				Name: currentPlan.Task.Name,
+				Type: "task",
+			}
+		}
+
+		if currentPlan.Get != nil {
+			taskMetrics[currentPlanID] = models.TaskMetric{
+				ID:   currentPlanID,
+				Name: currentPlan.Get.Name,
+				Type: "get",
+			}
+		}
+
+		if currentPlan.Put != nil {
+			taskMetrics[currentPlanID] = models.TaskMetric{
+				ID:   currentPlanID,
+				Name: currentPlan.Put.Name,
+				Type: "put",
+			}
+		}
+
+		if currentPlan.Aggregate != nil {
+			plans = append(plans, *currentPlan.Aggregate...)
+		}
+
+		if currentPlan.InParallel != nil {
+			plans = append(plans, currentPlan.InParallel.Steps...)
+		}
+
+		if currentPlan.Do != nil {
+			plans = append(plans, *currentPlan.Do...)
+		}
+
+		if currentPlan.OnAbort != nil {
+			plans = append(plans, currentPlan.OnAbort.Step, currentPlan.OnAbort.Next)
+		}
+
+		if currentPlan.OnError != nil {
+			plans = append(plans, currentPlan.OnError.Step, currentPlan.OnError.Next)
+		}
+
+		if currentPlan.Ensure != nil {
+			plans = append(plans, currentPlan.Ensure.Step, currentPlan.Ensure.Next)
+		}
+
+		if currentPlan.OnSuccess != nil {
+			plans = append(plans, currentPlan.OnSuccess.Step, currentPlan.OnSuccess.Next)
+		}
+
+		if currentPlan.OnFailure != nil {
+			plans = append(plans, currentPlan.OnFailure.Step, currentPlan.OnFailure.Next)
+		}
+
+		if currentPlan.Try != nil {
+			plans = append(plans, currentPlan.Try.Step)
+		}
+
+		if currentPlan.Timeout != nil {
+			plans = append(plans, currentPlan.Timeout.Step)
+		}
+
+		if currentPlan.Retry != nil {
+			plans = append(plans, *currentPlan.Retry...)
 		}
 	}
 
-	if plan.InParallel != nil {
-		for _, p1 := range plan.InParallel.Steps {
-			CollectIDs(p1, ids)
-		}
-	}
-
-	if plan.Do != nil {
-		for _, p1 := range *plan.Do {
-			CollectIDs(p1, ids)
-		}
-	}
-
-	if plan.OnAbort != nil {
-		CollectIDs(plan.OnAbort.Step, ids)
-		CollectIDs(plan.OnAbort.Next, ids)
-	}
-
-	if plan.OnError != nil {
-		CollectIDs(plan.OnError.Step, ids)
-		CollectIDs(plan.OnError.Next, ids)
-	}
-
-	if plan.Ensure != nil {
-		CollectIDs(plan.Ensure.Step, ids)
-		CollectIDs(plan.Ensure.Next, ids)
-	}
-
-	if plan.OnSuccess != nil {
-		CollectIDs(plan.OnSuccess.Step, ids)
-		CollectIDs(plan.OnSuccess.Next, ids)
-	}
-
-	if plan.OnFailure != nil {
-		CollectIDs(plan.OnFailure.Step, ids)
-		CollectIDs(plan.OnFailure.Next, ids)
-	}
-
-	if plan.Try != nil {
-		CollectIDs(plan.Try.Step, ids)
-	}
-
-	if plan.Timeout != nil {
-		CollectIDs(plan.Timeout.Step, ids)
-	}
-
-	if plan.Retry != nil {
-		for _, p1 := range *plan.Retry {
-			CollectIDs(p1, ids)
-		}
-	}
-
-	planID := string(plan.ID)
-
-	if plan.Task != nil {
-		ids[planID] = models.TaskMetric{
-			ID:   planID,
-			Name: plan.Task.Name,
-			Type: "task",
-		}
-	}
-
-	if plan.Get != nil {
-		ids[planID] = models.TaskMetric{
-			ID:   planID,
-			Name: plan.Get.Name,
-			Type: "get",
-		}
-	}
-
-	if plan.Put != nil {
-		ids[planID] = models.TaskMetric{
-			ID:   planID,
-			Name: plan.Put.Name,
-			Type: "put",
-		}
-	}
+	return taskMetrics
 }
 
 func PrettyPrint(v interface{}) {

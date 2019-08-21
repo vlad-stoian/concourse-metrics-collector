@@ -48,7 +48,7 @@ func ReadCache(cachePath string) (Elements, error) {
 }
 
 func (c *Cache) Flush() {
-	raw, err := json.Marshal(*c)
+	raw, err := json.Marshal(c.Processed)
 	if err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)

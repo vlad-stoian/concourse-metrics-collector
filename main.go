@@ -50,8 +50,6 @@ func ReadConfig(configPath string) (Config, error) {
 }
 
 func GetMetrics(client concourse.Client, build atc.Build) (models.BuildMetric, error) {
-	taskMetrics := map[string]models.TaskMetric{}
-
 	buildPublicPlan, found, err := client.BuildPlan(build.ID)
 	if err != nil {
 		return models.BuildMetric{}, errors.Wrap(err, "failed to get build plan")
@@ -67,7 +65,7 @@ func GetMetrics(client concourse.Client, build atc.Build) (models.BuildMetric, e
 		return models.BuildMetric{}, errors.Wrap(err, "failed to unmarshal build plan")
 	}
 
-	utils.CollectIDs(buildPlan, taskMetrics)
+	taskMetrics := utils.CollectIDs(buildPlan)
 
 	buildEvents, err := client.BuildEvents(strconv.Itoa(build.ID))
 	if err != nil {
